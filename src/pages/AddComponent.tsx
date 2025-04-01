@@ -13,10 +13,10 @@ import { json } from '@codemirror/lang-json';
 import { php } from '@codemirror/lang-php';
 import { python } from '@codemirror/lang-python';
 import { xml } from '@codemirror/lang-xml';
+import { StreamLanguage } from '@codemirror/language';
 import { swift } from '@codemirror/legacy-modes/mode/swift';
 import { ruby } from '@codemirror/legacy-modes/mode/ruby';
 import { rust } from '@codemirror/legacy-modes/mode/rust';
-import { Extension } from '@codemirror/state';
 import { X } from 'lucide-react';
 
 interface Component {
@@ -52,8 +52,7 @@ export function AddComponent() {
   const [programmingLanguage, setProgrammingLanguage] = useState('none');
   const [designNotation, setDesignNotation] = useState('none');
   const [codeBlock, setCodeBlock] = useState('');
-  const [componentCategory, setComponentCategory] = useState('none');
-  const [languageCompiler, setLanguageCompiler] = useState<Extension>(json);
+  const [componentCategory, setComponentCategory] = useState('');
   const [designFile, setDesignFile] = useState<string | null>(null);
   const [description, setDescription] = useState('');
   const [keywords, setKeywords] = useState<string[]>([]);
@@ -62,6 +61,8 @@ export function AddComponent() {
   const [dependencies, setDependencies] = useState<string[]>([]);
   const [newDependency, setNewDependency] = useState('');
   const [parentCategory, setParentCategory] = useState('');
+  const [error, setError] = useState('');
+  const [languageExtension, setLanguageExtension] = useState<any>(json());
 
   useEffect(() => {
     if (componentId) {
@@ -72,43 +73,43 @@ export function AddComponent() {
   useEffect(() => {
     switch (programmingLanguage) {
       case 'java':
-        setLanguageCompiler(java);
+        setLanguageExtension(java());
         break;
       case 'cpp':
-        setLanguageCompiler(cpp);
+        setLanguageExtension(cpp());
         break;
       case 'js':
-        setLanguageCompiler(javascript);
+        setLanguageExtension(javascript());
         break;
       case 'php':
-        setLanguageCompiler(php);
+        setLanguageExtension(php());
         break;
       case 'css':
-        setLanguageCompiler(css);
+        setLanguageExtension(css());
         break;
       case 'html':
-        setLanguageCompiler(html);
+        setLanguageExtension(html());
         break;
       case 'python':
-        setLanguageCompiler(python);
+        setLanguageExtension(python());
         break;
       case 'json':
-        setLanguageCompiler(json);
+        setLanguageExtension(json());
         break;
       case 'xml':
-        setLanguageCompiler(xml);
+        setLanguageExtension(xml());
         break;
       case 'swift':
-        setLanguageCompiler(swift);
+        setLanguageExtension(StreamLanguage.define(swift));
         break;
       case 'ruby':
-        setLanguageCompiler(ruby);
+        setLanguageExtension(StreamLanguage.define(ruby));
         break;
       case 'rust':
-        setLanguageCompiler(rust);
+        setLanguageExtension(StreamLanguage.define(rust));
         break;
       default:
-        setLanguageCompiler(json);
+        setLanguageExtension(json());
         break;
     }
   }, [programmingLanguage]);
@@ -136,6 +137,7 @@ export function AddComponent() {
       }
     } catch (error) {
       console.error('Error fetching component:', error);
+      setError('Failed to load component data');
     } finally {
       setLoading(false);
     }
@@ -143,39 +145,92 @@ export function AddComponent() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user) return;
-
+    if (!user) {
+      setError('You must be logged in to add a component');
+      return;
+    }
+    
     try {
       setLoading(true);
-      const componentData: Omit<Component, 'id'> = {
-        componentName,
+      setError('');
+      
+      // Validate required fields
+      if (!componentName.trim()) {
+        throw new Error('Component name is required');
+      }
+      
+      if (componentType === 'code' && programmingLanguage === 'none') {
+        throw new Error('Please select a programming language');
+      }
+      
+      if (componentType === 'design' && designNotation === 'none') {
+        throw new Error('Please select a design notation');
+      }
+      
+      if (!componentCategory.trim()) {
+        throw new Error('Component category is required');
+      }
+      
+      // Create a clean object without undefined values
+      const componentData = {
+        componentName: componentName.trim(),
         componentType,
-        programmingLanguage,
-        designNotation: componentType === 'design' ? designNotation : undefined,
-        codeBlock,
-        componentCategory,
-        description,
-        keywords,
+        programmingLanguage: componentType === 'code' ? programmingLanguage : '',
+        codeBlock: componentType === 'code' ? codeBlock : '',
+        componentCategory: componentCategory.trim(),
+        description: description.trim() || '',
+        keywords: keywords || [],
         usageCount: 0,
         queryCount: 0,
         timestamp: new Date(),
         createdBy: user.uid,
         status: 'active',
-        version,
-        dependencies,
-        parentCategory: parentCategory || undefined,
-        designFile
+        version: version.trim() || '1.0.0',
+        dependencies: dependencies || []
       };
+      
+      // Only add these fields if they have values to prevent undefined
+      if (componentType === 'design') {
+        Object.assign(componentData, {
+          designNotation: designNotation !== 'none' ? designNotation : ''
+        });
+        
+        if (designFile) {
+          Object.assign(componentData, { designFile });
+        }
+      }
+      
+      if (parentCategory && parentCategory.trim()) {
+        Object.assign(componentData, { parentCategory: parentCategory.trim() });
+      }
+
+      console.log('Attempting to save component data:', componentData);
 
       if (componentId) {
-        await updateDoc(doc(db, componentStorageName, componentId), componentData);
+        console.log(`Updating existing component with ID: ${componentId}`);
+        try {
+          await updateDoc(doc(db, componentStorageName, componentId), componentData);
+          console.log('Component updated successfully');
+        } catch (updateErr) {
+          console.error('Error in updateDoc:', updateErr);
+          throw new Error(`Failed to update component: ${updateErr instanceof Error ? updateErr.message : 'Unknown error'}`);
+        }
       } else {
-        await addDoc(collection(db, componentStorageName), componentData);
+        console.log('Creating new component');
+        try {
+          const docRef = await addDoc(collection(db, componentStorageName), componentData);
+          console.log('Component added successfully with ID:', docRef.id);
+        } catch (addErr) {
+          console.error('Error in addDoc:', addErr);
+          throw new Error(`Failed to add component: ${addErr instanceof Error ? addErr.message : 'Unknown error'}`);
+        }
       }
 
       navigate('/components');
     } catch (error) {
       console.error('Error saving component:', error);
+      setError(error instanceof Error ? error.message : 'An error occurred while saving the component');
+      alert(`Error: ${error instanceof Error ? error.message : 'An error occurred while saving the component'}`);
     } finally {
       setLoading(false);
     }
@@ -216,6 +271,12 @@ export function AddComponent() {
       <h1 className="text-3xl font-bold mb-8">
         {componentId ? 'Edit Component' : 'Add New Component'}
       </h1>
+
+      {error && (
+        <div className="mb-6 bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-md">
+          {error}
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} ref={formRef} className="space-y-6">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -407,7 +468,7 @@ export function AddComponent() {
             <CodeMirror
               value={codeBlock}
               height="400px"
-              extensions={[languageCompiler]}
+              extensions={[languageExtension]}
               onChange={(value) => setCodeBlock(value)}
               className="border rounded-md"
             />

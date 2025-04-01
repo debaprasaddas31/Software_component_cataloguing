@@ -13,13 +13,13 @@ interface Component {
   programmingLanguage?: string;
   designNotation?: string;
   componentCategory: string;
-  keywords: string[];
-  usageCount: number;
-  queryCount: number;
+  keywords?: string[];
+  usageCount?: number;
+  queryCount?: number;
   timestamp: Date;
   createdBy: string;
-  status: 'active' | 'archived';
-  version: string;
+  status?: 'active' | 'archived';
+  version?: string;
   parentCategory?: string;
 }
 
@@ -83,10 +83,22 @@ export function Components() {
       setLoading(true);
       const q = query(collection(db, componentStorageName), orderBy('timestamp', 'desc'));
       const querySnapshot = await getDocs(q);
-      const componentsData = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Component[];
+      const componentsData = querySnapshot.docs.map(doc => {
+        const data = doc.data();
+        // Convert Firestore timestamp to Date
+        const timestamp = data.timestamp?.toDate ? data.timestamp.toDate() : new Date();
+        return {
+          id: doc.id,
+          ...data,
+          timestamp,
+          // Ensure these fields are defined with defaults
+          keywords: data.keywords || [],
+          usageCount: data.usageCount || 0,
+          queryCount: data.queryCount || 0,
+          version: data.version || '1.0.0',
+          status: data.status || 'active'
+        };
+      }) as Component[];
       setComponents(componentsData);
     } catch (error) {
       console.error('Error fetching components:', error);

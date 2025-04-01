@@ -11,19 +11,48 @@ export function Auth() {
   const [name, setName] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [firebaseInitialized, setFirebaseInitialized] = useState(false);
   const { signIn, signUp } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
     // Check if Firebase Auth is properly initialized
-    console.log('Auth state:', auth.currentUser);
-    console.log('Auth config:', auth.config);
-  }, []);
+    console.log('Auth component mounted');
+    try {
+      if (auth) {
+        console.log('Firebase auth is available');
+        setFirebaseInitialized(true);
+        
+        // Check current auth state
+        const unsubscribe = auth.onAuthStateChanged((user) => {
+          console.log('Current auth state in Auth component:', user ? `User ${user.email} is signed in` : 'No user is signed in');
+          if (user) {
+            // User is already logged in, redirect to home
+            navigate('/');
+          }
+        });
+        
+        return () => unsubscribe();
+      } else {
+        console.error('Firebase auth is not available');
+        setError('Firebase authentication is not properly initialized');
+      }
+    } catch (err) {
+      console.error('Error checking auth initialization:', err);
+      setError('Error initializing authentication');
+    }
+  }, [navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
+
+    if (!firebaseInitialized) {
+      setError('Firebase is not properly initialized. Please refresh the page and try again.');
+      setLoading(false);
+      return;
+    }
 
     try {
       console.log('Attempting authentication...');
