@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db, componentStorageName } from '../lib/firebase';
 import { collection, query, orderBy, getDocs, deleteDoc, doc, updateDoc } from 'firebase/firestore';
-import { Package, Edit, Trash2, Plus, Search, Eye, ArrowUpRight } from 'lucide-react';
+import { Package, Edit, Trash2, Plus, Search, Eye, ArrowUpRight, Copy, X, Code } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 
 interface Component {
@@ -21,6 +21,8 @@ interface Component {
   status?: 'active' | 'archived';
   version?: string;
   parentCategory?: string;
+  codeBlock?: string;
+  designFile?: string;
 }
 
 interface CategoryTree {
@@ -39,6 +41,9 @@ export function Components() {
   const [categoryTree, setCategoryTree] = useState<CategoryTree>({});
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'list' | 'tree'>('list');
+  const [selectedComponent, setSelectedComponent] = useState<Component | null>(null);
+  const [showModal, setShowModal] = useState(false);
+  const [copySuccess, setCopySuccess] = useState(false);
 
   useEffect(() => {
     fetchComponents();
@@ -81,7 +86,7 @@ export function Components() {
   async function fetchComponents() {
     try {
       setLoading(true);
-      const q = query(collection(db, componentStorageName), orderBy('timestamp', 'desc'));
+      const q = query(collection(db, componentStorageName), orderBy('usageCount', 'desc'));
       const querySnapshot = await getDocs(q);
       const componentsData = querySnapshot.docs.map(doc => {
         const data = doc.data();
@@ -121,27 +126,56 @@ export function Components() {
   async function incrementUsageCount(component: Component) {
     try {
       const componentRef = doc(db, componentStorageName, component.id);
-      await updateDoc(componentRef, {
-        usageCount: (component.usageCount || 0) + 1,
-        lastUsed: new Date()
-      });
+      
+      // Increment both usage count and query count if there's a search query
+      if (searchQuery) {
+        await updateDoc(componentRef, {
+          usageCount: (component.usageCount || 0) + 1,
+          queryCount: (component.queryCount || 0) + 1,
+          lastUsed: new Date()
+        });
+        console.log(`Incremented query count for "${component.componentName}" after search and use`);
+      } else {
+        await updateDoc(componentRef, {
+          usageCount: (component.usageCount || 0) + 1,
+          lastUsed: new Date()
+        });
+      }
+      
+      // Set selected component and show modal
+      setSelectedComponent(component);
+      setShowModal(true);
+      
+      // Refresh components list to update counts
       fetchComponents();
     } catch (error) {
       console.error('Error updating usage count:', error);
     }
   }
 
-  async function incrementQueryCount(component: Component) {
-    try {
-      const componentRef = doc(db, componentStorageName, component.id);
-      await updateDoc(componentRef, {
-        queryCount: (component.queryCount || 0) + 1
-      });
-      fetchComponents();
-    } catch (error) {
-      console.error('Error updating query count:', error);
+  const handleCopyCode = () => {
+    if (selectedComponent?.codeBlock) {
+      navigator.clipboard.writeText(selectedComponent.codeBlock)
+        .then(() => {
+          setCopySuccess(true);
+          setTimeout(() => setCopySuccess(false), 2000);
+        })
+        .catch(err => {
+          console.error('Failed to copy code: ', err);
+        });
     }
-  }
+  };
+
+  const closeModal = () => {
+    setShowModal(false);
+    setSelectedComponent(null);
+    setCopySuccess(false);
+  };
+
+  // Check if user has permission to edit/delete the component
+  const canEditComponent = (component: Component) => {
+    return user && (user.uid === component.createdBy || user.role === 'admin');
+  };
 
   const filteredComponents = components.filter(component => {
     const searchLower = searchQuery.toLowerCase();
@@ -159,6 +193,9 @@ export function Components() {
     }
     
     return matchesSearch;
+  }).sort((a, b) => {
+    // Still maintain usage count sorting within filtered results
+    return (b.usageCount || 0) - (a.usageCount || 0);
   });
 
   const renderCategoryTree = (tree: CategoryTree, level: number = 0) => {
@@ -309,22 +346,26 @@ export function Components() {
                         className="p-2 text-gray-400 hover:text-gray-500"
                         title="Use Component"
                       >
-                        <ArrowUpRight className="h-5 w-5" />
+                        <Code className="h-5 w-5" />
                       </button>
-                      <Link
-                        to={`/components/edit/${component.id}`}
-                        className="p-2 text-gray-400 hover:text-gray-500"
-                        title="Edit"
-                      >
-                        <Edit className="h-5 w-5" />
-                      </Link>
-                      <button
-                        onClick={() => handleDelete(component.id)}
-                        className="p-2 text-gray-400 hover:text-red-500"
-                        title="Delete"
-                      >
-                        <Trash2 className="h-5 w-5" />
-                      </button>
+                      {canEditComponent(component) && (
+                        <>
+                          <Link
+                            to={`/components/edit/${component.id}`}
+                            className="p-2 text-gray-400 hover:text-gray-500"
+                            title="Edit"
+                          >
+                            <Edit className="h-5 w-5" />
+                          </Link>
+                          <button
+                            onClick={() => handleDelete(component.id)}
+                            className="p-2 text-gray-400 hover:text-red-500"
+                            title="Delete"
+                          >
+                            <Trash2 className="h-5 w-5" />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
                 </li>
@@ -333,6 +374,86 @@ export function Components() {
           </div>
         </div>
       </div>
+
+      {/* Component View and Copy Modal */}
+      {showModal && selectedComponent && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="p-4 border-b flex justify-between items-center">
+              <h3 className="text-lg font-semibold">
+                {selectedComponent.componentName}
+                <span className="ml-2 text-sm text-gray-500">v{selectedComponent.version}</span>
+              </h3>
+              <button onClick={closeModal} className="text-gray-400 hover:text-gray-500">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto flex-1">
+              <div className="mb-4">
+                <p className="text-gray-600">{selectedComponent.description}</p>
+                {selectedComponent.keywords && selectedComponent.keywords.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {selectedComponent.keywords.map((keyword, index) => (
+                      <span
+                        key={index}
+                        className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600"
+                      >
+                        {keyword}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+              
+              {selectedComponent.componentType === 'code' && selectedComponent.codeBlock ? (
+                <div className="relative">
+                  <div className="bg-gray-800 text-white p-4 rounded-md overflow-x-auto">
+                    <pre className="whitespace-pre-wrap">{selectedComponent.codeBlock}</pre>
+                  </div>
+                </div>
+              ) : selectedComponent.componentType === 'design' && selectedComponent.designFile ? (
+                <div className="border rounded-md p-4">
+                  <p className="text-gray-600 mb-2">Design File:</p>
+                  <a 
+                    href={selectedComponent.designFile}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-600 hover:underline"
+                  >
+                    {selectedComponent.designFile}
+                  </a>
+                </div>
+              ) : (
+                <p className="text-gray-500 italic">No content available for this component.</p>
+              )}
+            </div>
+            <div className="p-4 border-t flex justify-between items-center bg-gray-50">
+              <div className="text-sm text-gray-500">
+                Used {selectedComponent.usageCount} times
+              </div>
+              {selectedComponent.componentType === 'code' && selectedComponent.codeBlock && (
+                <button
+                  onClick={handleCopyCode}
+                  className={`flex items-center px-4 py-2 rounded-md ${
+                    copySuccess 
+                      ? 'bg-green-500 text-white' 
+                      : 'bg-blue-600 text-white hover:bg-blue-700'
+                  }`}
+                >
+                  {copySuccess ? (
+                    <>Copied!</>
+                  ) : (
+                    <>
+                      <Copy className="h-4 w-4 mr-2" />
+                      Copy Code
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
